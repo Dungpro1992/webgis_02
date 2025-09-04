@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebGIS — Gia Lai: Click to highlight 2 km</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-sA+e2mY6b4gYw2gCqv6fQnvkqgqkqQ3v6jv3F0iJT2M=" crossorigin=""/>
+  <style>
+    html,body,#map { height: 100%; margin: 0; padding: 0; }
+    .controls { position: absolute; top: 10px; right: 10px; z-index: 1000; background: rgba(255,255,255,0.9); padding: 8px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.2);} 
+    .legend { font-size: 13px; }
+    .hint { font-size: 13px; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="controls">
+    <div class="legend"><strong>Gia Lai — demo</strong></div>
+    <div class="hint">Bấm vào bản đồ → làm sáng vùng bán kính <span id="radiusLabel">2</span> km</div>
+    <div style="margin-top:6px">Chọn nền:</div>
+    <div id="basemaps"></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+  <script>
+    // Khởi tạo map tập trung vùng Gia Lai
+    const map = L.map('map', { zoomControl: true }).setView([13.8, 107.8], 9);
+
+    // Base layers
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
+    const positron = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© CARTO' });
+    const toner = L.tileLayer('https://stamen-tiles.a.ssl.fastly.net/toner/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '© Stamen' });
+
+    osm.addTo(map);
+
+    const baseMaps = { 'OpenStreetMap': osm, 'CartoDB Positron': positron, 'Stamen Toner': toner };
+    L.control.layers(baseMaps, null, { collapsed: false }).addTo(map);
+
+    // Variables for highlight
+    let maskLayer = null; // polygon with hole to dim everything except circle
+    let circleOutline = null;
+    let clickMarker = null;
+
+    // Draw Gia Lai administrative bbox optional (for user orientation)
+    // You can replace with an accurate GeoJSON for Gia Lai. For demo, we'll show a simple rectangle around province.
+    const gialaiBox = L.rectangle([[12.8, 106.9], [14.9, 108.8]], {color:'#3388ff', weight:1, fill:false, dashArray:'4 6'}).addTo(map);
+
+    // Function: create mask polygon (world polygon with hole = circle)
+    function createMaskPolygon(centerLatLng, radiusKm) {
+      // Use turf to build a circle polygon (geojson coordinates in [lon,lat])
+      const center = [centerLatLng.lng, centerLatLng.lat];
+      const circle = turf.circle(center, radiusKm, { steps: 128, units: 'kilometers' });
+
+      // World outer ring (clockwise) long/lat
+      const outer = [[-180,-90],[180,-90],[180,90],[-180,90],[-180,-90]];
+
+      // Convert circle coordinates from [lon,lat] to [lat,lon] for Leaflet
+      const hole = circle.geometry.coordinates[0].map(c => [c[1], c[0]]);
+
+      // Leaflet supports polygon with holes as [outer, hole]
+      // But outer must be in lat-lng order
+      const outerLatLng = outer.map(c => [c[1], c[0]]);
+
+      return [outerLatLng, hole];
+    }
+
+    function setHighlight(latlng, radiusKm=2) {
+      // remove existing
+      if (maskLayer) { map.removeLayer(maskLayer); maskLayer = null; }
+      if (circleOutline) { map.removeLayer(circleOutline); circleOutline = null; }
+      if (clickMarker) { map.removeLayer(clickMarker); clickMarker = null; }
+
+      // create mask polygon with a hole equal to the circle
+      const polyRings = createMaskPolygon(latlng, radiusKm);
+      maskLayer = L.polygon(polyRings, {
+        color: '#000', weight: 0, fillColor: '#000', fillOpacity: 0.55, interactive: false,
+        // make sure fill rule uses even-odd so hole is transparent in browsers supporting it
+        fillRule: 'evenodd'
+      }).addTo(map);
+
+      // circle outline for visible boundary
+      circleOutline = L.circle(latlng, { radius: radiusKm*1000, color: '#ff7800', weight: 2, fill:false }).addTo(map);
+
+      // small marker
+      clickMarker = L.circleMarker(latlng, { radius:6, fillColor:'#ff7800', color:'#fff', weight:1, fillOpacity:1 }).addTo(map);
+
+      // zoom to show area nicely (optional)
+      // map.fitBounds(circleOutline.getBounds(), { maxZoom: 13, padding: [40,40] });
+    }
+
+    // map click handler
+    map.on('click', function(e){
+      setHighlight(e.latlng, 2);
+      document.getElementById('radiusLabel').innerText = '2';
+    });
+
+    // optional UI to change radius quickly
+    const radiusControl = L.Control.extend({
+      options: { position: 'topright' },
+      onAdd: function(map) {
+        const container = L.DomUtil.create('div', 'radius-control');
+        container.style.background = 'white'; container.style.padding = '6px'; container.style.borderRadius='6px'; container.style.boxShadow='0 1px 4px rgba(0,0,0,0.3)';
+        container.innerHTML = '<div style="font-size:13px;margin-bottom:4px">Radius (km)</div>' +
+          '<input id="radiusRange" type="range" min="0.5" max="10" step="0.5" value="2" style="width:120px">' +
+          '<div style="font-size:12px;margin-top:4px"><span id="radiusVal">2</span> km</div>';
+        L.DomEvent.disableClickPropagation(container);
+        return container;
+      }
+    });
+    map.addControl(new radiusControl());
+
+    document.addEventListener('input', function(e){
+      if (e.target && e.target.id === 'radiusRange'){
+        const v = parseFloat(e.target.value);
+        document.getElementById('radiusVal').innerText = v;
+        document.getElementById('radiusLabel').innerText = v;
+        if (clickMarker){
+          // update mask using current clickMarker position
+          setHighlight(clickMarker.getLatLng(), v);
+        }
+      }
+    });
+
+    // Instructions: double click to clear
+    map.on('dblclick', function(){
+      if (maskLayer) { map.removeLayer(maskLayer); maskLayer=null; }
+      if (circleOutline) { map.removeLayer(circleOutline); circleOutline=null; }
+      if (clickMarker) { map.removeLayer(clickMarker); clickMarker=null; }
+    });
+
+    // Prevent map from moving when interacting with controls
+    map.getContainer().style.cursor = 'crosshair';
+
+    // Add scale
+    L.control.scale({ position:'bottomleft' }).addTo(map);
+
+    // Center map to Gia Lai bounds
+    map.fitBounds([[12.8,106.9],[14.9,108.8]]);
+
+    // End
+  </script>
+</body>
+</html>
